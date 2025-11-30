@@ -1,134 +1,169 @@
 import tkinter as tk
 from tkinter import messagebox
 
-# -------------------- SUDOKU LOGIC -------------------- #
+ANIMATION_DELAY = 40  # animation speed (ms)
 
-def find_empty_spot(board):
+
+# -------------------- SUDOKU UTILITIES -------------------- #
+
+def find_empty(board):
+    """Return the next empty cell in (row, col) format, or None if done."""
     for r in range(9):
         for c in range(9):
             if board[r][c] == -1:
                 return r, c
-    return None, None
+    return None
 
-def is_valid(board, guess, row, col):
+
+def is_valid(board, num, row, col):
+    """Check if num can be placed at board[row][col]."""
     # Row
     for c in range(9):
-        if c != col and board[row][c] == guess:
+        if c != col and board[row][c] == num:
             return False
 
     # Column
     for r in range(9):
-        if r != row and board[r][col] == guess:
+        if r != row and board[r][col] == num:
             return False
 
-    # 3x3 square
-    sr = (row // 3) * 3
-    sc = (col // 3) * 3
-    for r in range(sr, sr+3):
-        for c in range(sc, sc+3):
-            if (r != row or c != col) and board[r][c] == guess:
+    # Block
+    br = (row // 3) * 3
+    bc = (col // 3) * 3
+
+    for r in range(br, br + 3):
+        for c in range(bc, bc + 3):
+            if not (r == row and c == col) and board[r][c] == num:
                 return False
 
     return True
 
-def solver(board):
-    row, col = find_empty_spot(board)
-    if row is None:
-        return True
+
+def solve_with_trace(board, steps):
+    """
+    Perfect backtracking solver.
+    Records steps as:
+    (row, col, value)
+    where value = 1..9 for placement, or -1 for backtracking undo.
+    """
+
+    empty = find_empty(board)
+    if empty is None:
+        return True  # SOLVED
+
+    row, col = empty
 
     for guess in range(1, 10):
         if is_valid(board, guess, row, col):
             board[row][col] = guess
-            if solver(board):
+            steps.append((row, col, guess))  # record placement
+
+            if solve_with_trace(board, steps):
                 return True
-        board[row][col] = -1
+
+            # Backtrack
+            board[row][col] = -1
+            steps.append((row, col, -1))  # record undo
 
     return False
 
 
-# -------------------- GUI -------------------- #
+# -------------------- GUI CLASS -------------------- #
 
 class SudokuGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Sudoku Solver (Real-Time Validation)")
+        self.root.title("Sudoku Solver – Beautiful GUI + Animation")
         self.root.configure(bg="#222831")
 
-        self.cells = [[None for _ in range(9)] for _ in range(9)]
-        self.vars = [[None for _ in range(9)] for _ in range(9)]
+        self.cells = [[None]*9 for _ in range(9)]
+        self.vars = [[None]*9 for _ in range(9)]
 
-        # Container
+        self.steps = []          # recorded animation steps
+        self.step_index = 0      # current animation index
+        self.solution_board = [] # final board
+
+        # Outer container
         container = tk.Frame(root, bg="#222831")
         container.pack(padx=20, pady=20)
 
-        # Main grid frame
-        self.grid_frame = tk.Frame(container, bg="#222831")
-        self.grid_frame.grid(row=0, column=0)
+        # Sudoku grid frame
+        grid_frame = tk.Frame(container, bg="#222831")
+        grid_frame.grid(row=0, column=0)
 
-        # Create 3×3 bold subgrids
-        self.subgrids = [[None for _ in range(3)] for _ in range(3)]
-        for sg_r in range(3):
-            for sg_c in range(3):
+        # Build bold 3×3 blocks
+        blocks = [[None]*3 for _ in range(3)]
+        for br in range(3):
+            for bc in range(3):
                 frame = tk.Frame(
-                    self.grid_frame,
+                    grid_frame,
                     bg="#eeeeee",
                     bd=4,
                     relief="solid"
                 )
-                frame.grid(row=sg_r, column=sg_c, padx=4, pady=4)
-                self.subgrids[sg_r][sg_c] = frame
+                frame.grid(row=br, column=bc, padx=3, pady=3)
+                blocks[br][bc] = frame
 
-        # Create entry cells with validation bind
+        # Build cells inside blocks
         for r in range(9):
             for c in range(9):
-                frame = self.subgrids[r // 3][c // 3]
+                parent = blocks[r // 3][c // 3]
 
                 var = tk.StringVar()
-                var.trace("w", lambda *args, row=r, col=c: self.validate_cell(row, col))
+                var.trace("w", lambda *args, rr=r, cc=c: self.validate(rr, cc))
 
-                entry = tk.Entry(
-                    frame,
+                e = tk.Entry(
+                    parent,
                     width=2,
                     font=("Helvetica", 20),
                     justify="center",
+                    textvariable=var,
                     bd=2,
-                    relief="ridge",
-                    textvariable=var
+                    relief="ridge"
                 )
-                entry.grid(row=r % 3, column=c % 3, padx=4, pady=4)
+                e.grid(row=r % 3, column=c % 3, padx=4, pady=4)
 
-                self.cells[r][c] = entry
+                self.cells[r][c] = e
                 self.vars[r][c] = var
 
-        solve_button = tk.Button(
-            container,
-            text="Solve",
-            font=("Helvetica", 15, "bold"),
-            command=self.solve_and_fill,
+        # Buttons
+        btn_frame = tk.Frame(container, bg="#222831")
+        btn_frame.grid(row=1, column=0, pady=15)
+
+        tk.Button(
+            btn_frame,
+            text="Animate Solve",
+            font=("Helvetica", 14, "bold"),
             bg="#00adb5",
             fg="white",
-            padx=12,
-            pady=5
-        )
-        solve_button.grid(row=1, column=0, pady=20)
+            padx=10,
+            command=self.start_animation
+        ).grid(row=0, column=0, padx=5)
 
+        tk.Button(
+            btn_frame,
+            text="Clear",
+            font=("Helvetica", 14),
+            bg="#393e46",
+            fg="white",
+            padx=10,
+            command=self.clear
+        ).grid(row=0, column=1, padx=5)
 
-    # -------------------- REAL-TIME VALIDATION -------------------- #
+    # -------------------- VALIDATION -------------------- #
 
-    def validate_cell(self, row, col):
-        text = self.vars[row][col].get()
+    def validate(self, row, col):
+        txt = self.vars[row][col].get()
 
-        # Empty → white
-        if text == "":
+        if txt == "":
             self.cells[row][col].configure(bg="white")
             return
 
-        # Non-digit
-        if not text.isdigit():
+        if not txt.isdigit():
             self.cells[row][col].configure(bg="#ff4d4d")
             return
 
-        num = int(text)
+        num = int(txt)
         if not (1 <= num <= 9):
             self.cells[row][col].configure(bg="#ff4d4d")
             return
@@ -136,12 +171,11 @@ class SudokuGUI:
         board = self.read_board()
 
         if is_valid(board, num, row, col):
-            self.cells[row][col].configure(bg="#b3ffcc")  # light green
+            self.cells[row][col].configure(bg="#b3ffcc")
         else:
-            self.cells[row][col].configure(bg="#ff4d4d")  # red
+            self.cells[row][col].configure(bg="#ff4d4d")
 
-
-    # -------------------- HELPERS -------------------- #
+    # -------------------- UTILS -------------------- #
 
     def read_board(self):
         board = []
@@ -156,19 +190,66 @@ class SudokuGUI:
             board.append(row_vals)
         return board
 
-    def solve_and_fill(self):
-        board = self.read_board()
+    def clear(self):
+        for r in range(9):
+            for c in range(9):
+                self.vars[r][c].set("")
+                self.cells[r][c].configure(bg="white")
 
-        if solver(board):
+        self.steps = []
+        self.step_index = 0
+
+    # -------------------- ANIMATION -------------------- #
+
+    def start_animation(self):
+        # Reset state
+        self.steps = []
+        self.step_index = 0
+
+        # Copy board
+        board = self.read_board()
+        work = [row[:] for row in board]
+
+        # Solve and record steps
+        if not solve_with_trace(work, self.steps):
+            messagebox.showerror("Unsolvable", "This Sudoku cannot be solved!")
+            return
+
+        self.solution_board = work
+
+        # Wipe empty cells to white
+        for r in range(9):
+            for c in range(9):
+                if self.vars[r][c].get().strip() == "":
+                    self.cells[r][c].configure(bg="white")
+
+        self.animate_step()
+
+    def animate_step(self):
+        if self.step_index >= len(self.steps):
+            # Finalize board
             for r in range(9):
                 for c in range(9):
-                    self.vars[r][c].set(str(board[r][c]))
+                    self.vars[r][c].set(str(self.solution_board[r][c]))
                     self.cells[r][c].configure(bg="#b3ffcc")
+            return
+
+        r, c, val = self.steps[self.step_index]
+
+        if val == -1:
+            # Backtrack undo
+            self.vars[r][c].set("")
+            self.cells[r][c].configure(bg="#ff4d4d")
         else:
-            messagebox.showerror("Unsolvable", "This Sudoku cannot be solved!")
+            # Try a number
+            self.vars[r][c].set(str(val))
+            self.cells[r][c].configure(bg="#b3ffcc")
+
+        self.step_index += 1
+        self.root.after(ANIMATION_DELAY, self.animate_step)
 
 
-# -------------------- RUN APP -------------------- #
+# -------------------- MAIN -------------------- #
 
 if __name__ == "__main__":
     root = tk.Tk()
