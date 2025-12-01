@@ -1,12 +1,15 @@
 import tkinter as tk
 from tkinter import messagebox
+from copy import deepcopy
+
+from sudoku_generator import generate_puzzle  # uses your true generator
+
 
 # ============================================================
 #                 BOARD LOGIC HELPERS
 # ============================================================
 
 def is_valid(board, num, row, col):
-    """Check if num can be placed at (row, col)."""
     for c in range(9):
         if board[row][c] == num and c != col:
             return False
@@ -23,7 +26,6 @@ def is_valid(board, num, row, col):
 
 
 def find_empty(board):
-    """Find first empty cell."""
     for r in range(9):
         for c in range(9):
             if board[r][c] == 0:
@@ -32,31 +34,32 @@ def find_empty(board):
 
 
 # ============================================================
-#          ANIMATED BACKTRACK SOLVER (GENERATOR)
+#         SOLVER WITH RECORDED STEPS (NO ANIM RECURSION)
 # ============================================================
 
-def solve_generator(board):
+def solve_with_steps(board, steps):
+    """
+    Standard backtracking solver that RECORDS every step in `steps`.
+    Each step is ("place"/"backtrack", row, col, value).
+    """
     empty = find_empty(board)
     if not empty:
-        yield ("final", None, None, None)
-        return
+        return True  # solved
 
     r, c = empty
     for guess in range(1, 10):
         if is_valid(board, guess, r, c):
+            steps.append(("place", r, c, guess))
             board[r][c] = guess
-            yield ("place", r, c, guess)
 
-            for step in solve_generator(board):
-                yield step
-                if step[0] == "final":
-                    return
+            if solve_with_steps(board, steps):
+                return True
 
-        # backtrack
-        board[r][c] = 0
-        yield ("backtrack", r, c, guess)
+            # backtrack
+            steps.append(("backtrack", r, c, 0))
+            board[r][c] = 0
 
-    yield ("deadend", r, c, None)
+    return False
 
 
 # ============================================================
@@ -102,18 +105,21 @@ def find_hidden_single_in_unit(board, candidates, cells, name):
 
 
 def find_hidden_single(board, candidates):
+    # rows
     for r in range(9):
         cells = [(r, c) for c in range(9)]
         res = find_hidden_single_in_unit(board, candidates, cells, f"row {r+1}")
         if res:
             return res
 
+    # cols
     for c in range(9):
         cells = [(r, c) for r in range(9)]
         res = find_hidden_single_in_unit(board, candidates, cells, f"column {c+1}")
         if res:
             return res
 
+    # boxes
     for br in range(3):
         for bc in range(3):
             cells = [(r, c) for r in range(br*3, br*3+3)
@@ -126,54 +132,56 @@ def find_hidden_single(board, candidates):
 
 
 # ============================================================
-#                     GUI CLASS
+#                  MAIN GAME GUI (GRID SCREEN)
 # ============================================================
 
 class SudokuGUI:
-    def __init__(self, root):
+    def __init__(self, root, initial_board=None):
         self.root = root
-        self.root.title("Sudoku — Pencil, Hint, Animation")
+        self.root.title("Sudoku Game")
         self.root.configure(bg="#222831")
 
-        # Board model
-        self.board = [[0]*9 for _ in range(9)]
+        self.board = deepcopy(initial_board) if initial_board else [[0]*9 for _ in range(9)]
         self.candidates = [[set() for _ in range(9)] for _ in range(9)]
         self.selected = None
         self.pencil_mode = False
 
-        self.solve_steps = None
+        self.solve_steps = []
         self.solve_running = False
 
         self.build_ui()
 
-    # --------------------------------------------------------
-    #                   UI SETUP
-    # --------------------------------------------------------
+    # ---------------- UI setup ---------------- #
+
     def build_ui(self):
         top = tk.Frame(self.root, bg="#222831")
         top.pack(pady=5)
 
+        # BACK BUTTON
+        tk.Button(top, text="◀ Back", bg="#444", fg="white",
+                  font=("Arial", 12, "bold"),
+                  command=self.go_back).grid(row=0, column=0, padx=10)
+
         self.pencil_label = tk.Label(top, text="Pencil: OFF",
                                      fg="white", bg="#222831", font=("Arial", 12))
-        self.pencil_label.grid(row=0, column=0, padx=10)
+        self.pencil_label.grid(row=0, column=1, padx=10)
 
         tk.Button(top, text="Pencil (P)", bg="#00adb5", fg="white",
                   command=self.toggle_pencil,
-                  font=("Arial", 12, "bold")).grid(row=0, column=1, padx=10)
+                  font=("Arial", 12, "bold")).grid(row=0, column=2, padx=10)
 
         tk.Button(top, text="Hint", bg="#393e46", fg="white",
                   command=self.hint,
-                  font=("Arial", 12)).grid(row=0, column=2, padx=10)
+                  font=("Arial", 12)).grid(row=0, column=3, padx=10)
 
         tk.Button(top, text="Solve", bg="#00adb5", fg="white",
                   command=self.start_animation,
-                  font=("Arial", 12, "bold")).grid(row=0, column=3, padx=10)
+                  font=("Arial", 12, "bold")).grid(row=0, column=4, padx=10)
 
         tk.Button(top, text="Clear", bg="#393e46", fg="white",
                   command=self.clear,
-                  font=("Arial", 12)).grid(row=0, column=4, padx=10)
+                  font=("Arial", 12)).grid(row=0, column=5, padx=10)
 
-        # Canvas Grid
         self.canvas = tk.Canvas(self.root, bg="white", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
 
@@ -181,9 +189,17 @@ class SudokuGUI:
         self.canvas.bind("<Button-1>", self.handle_click)
         self.root.bind("<Key>", self.key_input)
 
-    # --------------------------------------------------------
-    #             CANVAS DRAWING FUNCTIONS
-    # --------------------------------------------------------
+    # ---------------- Back button ---------------- #
+
+    def go_back(self):
+        """Return to main menu."""
+        self.root.destroy()
+        newroot = tk.Tk()
+        MainMenu(newroot)
+        newroot.mainloop()
+
+    # ---------------- Drawing ---------------- #
+
     def redraw(self, event=None):
         self.canvas.delete("all")
 
@@ -259,9 +275,8 @@ class SudokuGUI:
                         fill="#444444"
                     )
 
-    # --------------------------------------------------------
-    #       INPUT: MOUSE CLICK & KEYBOARD HANDLING
-    # --------------------------------------------------------
+    # ---------------- Input handling ---------------- #
+
     def handle_click(self, event):
         x, y = event.x, event.y
         col = int((x - self.x_offset)//self.cell)
@@ -272,7 +287,7 @@ class SudokuGUI:
             self.redraw()
 
     def key_input(self, event):
-        if not self.selected:
+        if not self.selected or self.solve_running:
             return
         r, c = self.selected
         ch = event.char
@@ -299,61 +314,64 @@ class SudokuGUI:
                 self.candidates[r][c].clear()
             self.redraw()
 
-    # --------------------------------------------------------
-    #                BUTTON FUNCTIONS
-    # --------------------------------------------------------
+    # ---------------- Buttons ---------------- #
+
     def toggle_pencil(self):
         self.pencil_mode = not self.pencil_mode
         self.pencil_label.config(text=f"Pencil: {'ON' if self.pencil_mode else 'OFF'}")
 
     def clear(self):
+        if self.solve_running:
+            return
         self.board = [[0]*9 for _ in range(9)]
         self.candidates = [[set() for _ in range(9)] for _ in range(9)]
         self.selected = None
         self.redraw()
 
-    # ----------------- SOLVE WITH ANIMATION -----------------
+    # ---------------- Solve animation (record + replay) ---------------- #
+
     def start_animation(self):
         if self.solve_running:
             return
 
-        temp = [row[:] for row in self.board]
-        self.solve_steps = solve_generator(temp)
+        temp = deepcopy(self.board)
+        steps = []
+        solvable = solve_with_steps(temp, steps)
+
+        if not solvable:
+            messagebox.showerror("Error", "This puzzle cannot be solved.")
+            return
+
+        # steps now contains all place/backtrack moves; temp is fully solved
+        self.solve_steps = steps
         self.solve_running = True
-        self.animate(temp)
+        self.play_steps(0)
 
-    def animate(self, temp):
-        try:
-            step, r, c, val = next(self.solve_steps)
-
-            if step == "place":
-                self.board[r][c] = val
-                self.selected = (r, c)
-
-            elif step == "backtrack":
-                self.board[r][c] = 0
-                self.selected = (r, c)
-
-            elif step == "deadend":
-                self.selected = (r, c)
-
-            elif step == "final":
-                self.board = temp
-                self.solve_running = False
-                self.selected = None
-                self.redraw()
-                messagebox.showinfo("Solved!", "Sudoku solved with animation!")
-                return
-
-            self.redraw()
-            self.root.after(20, lambda: self.animate(temp))
-
-        except StopIteration:
+    def play_steps(self, idx):
+        if idx >= len(self.solve_steps):
             self.solve_running = False
+            self.selected = None
+            self.redraw()
+            messagebox.showinfo("Solved!", "Sudoku solved with animation!")
+            return
 
-    # ---------------------- HINT LOGIC ----------------------
+        action, r, c, val = self.solve_steps[idx]
+
+        # apply action to visible board
+        self.board[r][c] = val
+        self.selected = (r, c)
+        self.redraw()
+
+        # adjust speed here (ms)
+        self.root.after(20, lambda: self.play_steps(idx+1))
+
+    # ---------------- Hint ---------------- #
+
     def hint(self):
-        temp = [row[:] for row in self.board]
+        if self.solve_running:
+            return
+
+        temp = deepcopy(self.board)
         cand = compute_all_candidates(temp)
 
         res = find_naked_single(temp, cand)
@@ -361,7 +379,7 @@ class SudokuGUI:
             res = find_hidden_single(temp, cand)
 
         if not res:
-            messagebox.showinfo("Hint", "No logical hint found.")
+            messagebox.showinfo("Hint", "No simple logical hint available.")
             return
 
         r, c, val, msg = res
@@ -373,10 +391,49 @@ class SudokuGUI:
 
 
 # ============================================================
+#                     MAIN MENU SCREEN
+# ============================================================
+
+class MainMenu:
+    def __init__(self, root):
+        self.root = root
+        root.title("Sudoku")
+        root.geometry("400x300")
+        root.configure(bg="#222831")
+
+        tk.Label(root, text="Sudoku", fg="white", bg="#222831",
+                 font=("Arial", 28, "bold")).pack(pady=20)
+
+        tk.Button(root, text="Play with your own input",
+                  bg="#00adb5", fg="white",
+                  font=("Arial", 16, "bold"),
+                  command=self.start_custom).pack(pady=15)
+
+        tk.Button(root, text="Solve a random Sudoku puzzle",
+                  bg="#393e46", fg="white",
+                  font=("Arial", 16, "bold"),
+                  command=self.start_random).pack(pady=15)
+
+    def start_custom(self):
+        self.open_game([[0]*9 for _ in range(9)])
+
+    def start_random(self):
+        # tweak min_clues for difficulty (e.g., 32 easy, 28 medium, 24 hard)
+        puzzle = generate_puzzle()  # uses default clues=30
+        self.open_game(puzzle)
+
+    def open_game(self, board):
+        self.root.destroy()
+        newroot = tk.Tk()
+        SudokuGUI(newroot, board)
+        newroot.mainloop()
+
+
+# ============================================================
 #                        RUN APP
 # ============================================================
 
 if __name__ == "__main__":
     root = tk.Tk()
-    SudokuGUI(root)
+    MainMenu(root)
     root.mainloop()
