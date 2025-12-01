@@ -1,255 +1,348 @@
 import tkinter as tk
 from tkinter import messagebox
 
-ANIMATION_DELAY = 40  # animation speed (ms)
+# --------------------- LOGIC HELPERS --------------------- #
 
+def is_valid(board, num, row, col):
+    for c in range(9):
+        if board[row][c] == num and c != col:
+            return False
+    for r in range(9):
+        if board[r][col] == num and r != row:
+            return False
 
-# -------------------- SUDOKU UTILITIES -------------------- #
+    br, bc = (row // 3) * 3, (col // 3) * 3
+    for r in range(br, br + 3):
+        for c in range(bc, bc + 3):
+            if board[r][c] == num and (r, c) != (row, col):
+                return False
+    return True
+
 
 def find_empty(board):
-    """Return the next empty cell in (row, col) format, or None if done."""
     for r in range(9):
         for c in range(9):
-            if board[r][c] == -1:
+            if board[r][c] == 0:
                 return r, c
     return None
 
 
-def is_valid(board, num, row, col):
-    """Check if num can be placed at board[row][col]."""
-    # Row
-    for c in range(9):
-        if c != col and board[row][c] == num:
-            return False
-
-    # Column
-    for r in range(9):
-        if r != row and board[r][col] == num:
-            return False
-
-    # Block
-    br = (row // 3) * 3
-    bc = (col // 3) * 3
-
-    for r in range(br, br + 3):
-        for c in range(bc, bc + 3):
-            if not (r == row and c == col) and board[r][c] == num:
-                return False
-
-    return True
-
-
-def solve_with_trace(board, steps):
-    """
-    Perfect backtracking solver.
-    Records steps as:
-    (row, col, value)
-    where value = 1..9 for placement, or -1 for backtracking undo.
-    """
-
-    empty = find_empty(board)
-    if empty is None:
-        return True  # SOLVED
-
-    row, col = empty
-
-    for guess in range(1, 10):
-        if is_valid(board, guess, row, col):
-            board[row][col] = guess
-            steps.append((row, col, guess))  # record placement
-
-            if solve_with_trace(board, steps):
+def backtracking_solve(board):
+    pos = find_empty(board)
+    if pos is None:
+        return True
+    r, c = pos
+    for num in range(1, 10):
+        if is_valid(board, num, r, c):
+            board[r][c] = num
+            if backtracking_solve(board):
                 return True
-
-            # Backtrack
-            board[row][col] = -1
-            steps.append((row, col, -1))  # record undo
-
+            board[r][c] = 0
     return False
 
 
-# -------------------- GUI CLASS -------------------- #
+def compute_all_candidates(board):
+    """Return 9x9 array of candidate sets for each empty cell."""
+    candidates = [[set() for _ in range(9)] for _ in range(9)]
+    for r in range(9):
+        for c in range(9):
+            if board[r][c] == 0:
+                for d in range(1, 10):
+                    if is_valid(board, d, r, c):
+                        candidates[r][c].add(d)
+    return candidates
+
+
+def find_naked_single(board, candidates):
+    """Cell with exactly one candidate."""
+    for r in range(9):
+        for c in range(9):
+            if board[r][c] == 0 and len(candidates[r][c]) == 1:
+                val = next(iter(candidates[r][c]))
+                msg = f"Naked single: cell ({r+1}, {c+1}) must be {val}."
+                return r, c, val, msg
+    return None
+
+
+def find_hidden_single_in_unit(board, candidates, cells, unit_name):
+    """Hidden single inside given unit (row/col/box)."""
+    count = {d: [] for d in range(1, 10)}
+    for (r, c) in cells:
+        if board[r][c] == 0:
+            for d in candidates[r][c]:
+                count[d].append((r, c))
+
+    for d in range(1, 10):
+        if len(count[d]) == 1:
+            r, c = count[d][0]
+            msg = f"Hidden single in {unit_name}: digit {d} can only go in cell ({r+1}, {c+1})."
+            return r, c, d, msg
+    return None
+
+
+def find_hidden_single(board, candidates):
+    """Search rows, columns and boxes for a hidden single."""
+    # Rows
+    for r in range(9):
+        cells = [(r, c) for c in range(9)]
+        res = find_hidden_single_in_unit(board, candidates, cells, f"row {r+1}")
+        if res:
+            return res
+
+    # Columns
+    for c in range(9):
+        cells = [(r, c) for r in range(9)]
+        res = find_hidden_single_in_unit(board, candidates, cells, f"column {c+1}")
+        if res:
+            return res
+
+    # Boxes
+    for br in range(3):
+        for bc in range(3):
+            cells = []
+            for r in range(br*3, br*3 + 3):
+                for c in range(bc*3, bc*3 + 3):
+                    cells.append((r, c))
+            res = find_hidden_single_in_unit(board, candidates, cells, f"box ({br+1},{bc+1})")
+            if res:
+                return res
+
+    return None
+
+
+# ----------------------- GUI CLASS ------------------------ #
 
 class SudokuGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Sudoku Solver – Beautiful GUI + Animation")
+        self.root.title("Responsive Sudoku (Auto-Fit Screen)")
         self.root.configure(bg="#222831")
 
-        self.cells = [[None]*9 for _ in range(9)]
-        self.vars = [[None]*9 for _ in range(9)]
+        # Model data
+        self.board = [[0]*9 for _ in range(9)]
+        self.candidates = [[set() for _ in range(9)] for _ in range(9)]
+        self.selected = None
+        self.pencil_mode = False
 
-        self.steps = []          # recorded animation steps
-        self.step_index = 0      # current animation index
-        self.solution_board = [] # final board
+        # --------- Top Button Bar --------- #
+        top = tk.Frame(root, bg="#222831")
+        top.pack(pady=5)
 
-        # Outer container
-        container = tk.Frame(root, bg="#222831")
-        container.pack(padx=20, pady=20)
+        self.pencil_label = tk.Label(top, text="Pencil: OFF", fg="white", bg="#222831", font=("Arial", 12))
+        self.pencil_label.grid(row=0, column=0, padx=10)
 
-        # Sudoku grid frame
-        grid_frame = tk.Frame(container, bg="#222831")
-        grid_frame.grid(row=0, column=0)
+        tk.Button(top, text="Pencil (P)", bg="#00adb5", fg="white",
+                  command=self.toggle_pencil, font=("Arial", 12, "bold")).grid(row=0, column=1, padx=10)
 
-        # Build bold 3×3 blocks
-        blocks = [[None]*3 for _ in range(3)]
-        for br in range(3):
-            for bc in range(3):
-                frame = tk.Frame(
-                    grid_frame,
-                    bg="#eeeeee",
-                    bd=4,
-                    relief="solid"
-                )
-                frame.grid(row=br, column=bc, padx=3, pady=3)
-                blocks[br][bc] = frame
+        tk.Button(top, text="Hint", bg="#393e46", fg="white",
+                  command=self.hint, font=("Arial", 12)).grid(row=0, column=2, padx=10)
 
-        # Build cells inside blocks
-        for r in range(9):
-            for c in range(9):
-                parent = blocks[r // 3][c // 3]
+        tk.Button(top, text="Solve", bg="#00adb5", fg="white",
+                  command=self.solve, font=("Arial", 12, "bold")).grid(row=0, column=3, padx=10)
 
-                var = tk.StringVar()
-                var.trace("w", lambda *args, rr=r, cc=c: self.validate(rr, cc))
+        tk.Button(top, text="Clear", bg="#393e46", fg="white",
+                  command=self.clear, font=("Arial", 12)).grid(row=0, column=4, padx=10)
 
-                e = tk.Entry(
-                    parent,
-                    width=2,
-                    font=("Helvetica", 20),
-                    justify="center",
-                    textvariable=var,
-                    bd=2,
-                    relief="ridge"
-                )
-                e.grid(row=r % 3, column=c % 3, padx=4, pady=4)
+        # --------- Responsive Canvas --------- #
+        self.canvas = tk.Canvas(root, bg="white", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
 
-                self.cells[r][c] = e
-                self.vars[r][c] = var
+        # Redraw grid when window resizes
+        self.canvas.bind("<Configure>", self.redraw)
 
-        # Buttons
-        btn_frame = tk.Frame(container, bg="#222831")
-        btn_frame.grid(row=1, column=0, pady=15)
+        # Click handler
+        self.canvas.bind("<Button-1>", self.handle_click)
 
-        tk.Button(
-            btn_frame,
-            text="Animate Solve",
-            font=("Helvetica", 14, "bold"),
-            bg="#00adb5",
-            fg="white",
-            padx=10,
-            command=self.start_animation
-        ).grid(row=0, column=0, padx=5)
+        # Keyboard input
+        root.bind("<Key>", self.key_input)
 
-        tk.Button(
-            btn_frame,
-            text="Clear",
-            font=("Helvetica", 14),
-            bg="#393e46",
-            fg="white",
-            padx=10,
-            command=self.clear
-        ).grid(row=0, column=1, padx=5)
+    # -------------------- GRID RENDERING -------------------- #
 
-    # -------------------- VALIDATION -------------------- #
+    def redraw(self, event=None):
+        self.canvas.delete("all")
 
-    def validate(self, row, col):
-        txt = self.vars[row][col].get()
+        # Determine square area that fits both width & height
+        size = min(self.canvas.winfo_width(), self.canvas.winfo_height())
+        self.cell = size / 9
+        self.size = size
 
-        if txt == "":
-            self.cells[row][col].configure(bg="white")
+        # Center grid
+        self.x_offset = (self.canvas.winfo_width() - size) / 2
+        self.y_offset = (self.canvas.winfo_height() - size) / 2
+
+        # Draw highlight
+        self.draw_highlights()
+
+        # Draw cells
+        self.draw_numbers()
+
+        # Draw grid lines
+        self.draw_grid()
+
+    def draw_grid(self):
+        for i in range(10):
+            thickness = 3 if i % 3 == 0 else 1
+            color = "black"
+
+            # horizontal
+            self.canvas.create_line(
+                self.x_offset,
+                self.y_offset + i*self.cell,
+                self.x_offset + self.size,
+                self.y_offset + i*self.cell,
+                width=thickness,
+                fill=color
+            )
+
+            # vertical
+            self.canvas.create_line(
+                self.x_offset + i*self.cell,
+                self.y_offset,
+                self.x_offset + i*self.cell,
+                self.y_offset + self.size,
+                width=thickness,
+                fill=color
+            )
+
+    def draw_highlights(self):
+        if not self.selected:
             return
+        r, c = self.selected
 
-        if not txt.isdigit():
-            self.cells[row][col].configure(bg="#ff4d4d")
-            return
+        for rr in range(9):
+            for cc in range(9):
+                x1 = self.x_offset + cc*self.cell
+                y1 = self.y_offset + rr*self.cell
+                x2 = x1 + self.cell
+                y2 = y1 + self.cell
 
-        num = int(txt)
-        if not (1 <= num <= 9):
-            self.cells[row][col].configure(bg="#ff4d4d")
-            return
-
-        board = self.read_board()
-
-        if is_valid(board, num, row, col):
-            self.cells[row][col].configure(bg="#b3ffcc")
-        else:
-            self.cells[row][col].configure(bg="#ff4d4d")
-
-    # -------------------- UTILS -------------------- #
-
-    def read_board(self):
-        board = []
-        for r in range(9):
-            row_vals = []
-            for c in range(9):
-                val = self.vars[r][c].get()
-                if val.isdigit():
-                    row_vals.append(int(val))
+                if (rr, cc) == (r, c):
+                    color = "#4da3ff"   # blue
+                elif rr == r or cc == c or (rr//3 == r//3 and cc//3 == c//3):
+                    color = "#fff3b0"   # yellow
                 else:
-                    row_vals.append(-1)
-            board.append(row_vals)
-        return board
+                    continue
+
+                self.canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline="")
+
+    def draw_numbers(self):
+        for r in range(9):
+            for c in range(9):
+                x = self.x_offset + c*self.cell + self.cell/2
+                y = self.y_offset + r*self.cell + self.cell/2
+
+                if self.board[r][c] != 0:
+                    # Final number
+                    self.canvas.create_text(
+                        x, y, text=str(self.board[r][c]),
+                        font=("Arial", int(self.cell/2.1)),
+                        fill="black"
+                    )
+                elif self.candidates[r][c]:
+                    # Pencil marks
+                    text = "·".join(str(d) for d in sorted(self.candidates[r][c]))
+                    self.canvas.create_text(
+                        x, y, text=text,
+                        font=("Arial", int(self.cell/4.5)),
+                        fill="#444444"
+                    )
+
+    # -------------------- INPUT HANDLERS -------------------- #
+
+    def handle_click(self, event):
+        x, y = event.x, event.y
+
+        # Convert click to cell index
+        col = int((x - self.x_offset) // self.cell)
+        row = int((y - self.y_offset) // self.cell)
+
+        if 0 <= row < 9 and 0 <= col < 9:
+            self.selected = (row, col)
+            self.redraw()
+
+    def key_input(self, event):
+        if not self.selected:
+            return
+
+        r, c = self.selected
+        ch = event.char
+
+        # Toggle pencil
+        if ch in ("p", "P"):
+            self.toggle_pencil()
+            return
+
+        # Clear
+        if ch == "0" or event.keysym in ("BackSpace", "Delete"):
+            self.board[r][c] = 0
+            self.candidates[r][c].clear()
+            self.redraw()
+            return
+
+        # Digits
+        if ch in "123456789":
+            d = int(ch)
+            if self.pencil_mode:
+                if d in self.candidates[r][c]:
+                    self.candidates[r][c].remove(d)
+                else:
+                    self.candidates[r][c].add(d)
+            else:
+                self.board[r][c] = d
+                self.candidates[r][c].clear()
+
+            self.redraw()
+
+    # -------------------- BUTTON ACTIONS -------------------- #
+
+    def toggle_pencil(self):
+        self.pencil_mode = not self.pencil_mode
+        self.pencil_label.config(text=f"Pencil: {'ON' if self.pencil_mode else 'OFF'}")
 
     def clear(self):
-        for r in range(9):
-            for c in range(9):
-                self.vars[r][c].set("")
-                self.cells[r][c].configure(bg="white")
+        self.board = [[0]*9 for _ in range(9)]
+        self.candidates = [[set() for _ in range(9)] for _ in range(9)]
+        self.selected = None
+        self.redraw()
 
-        self.steps = []
-        self.step_index = 0
-
-    # -------------------- ANIMATION -------------------- #
-
-    def start_animation(self):
-        # Reset state
-        self.steps = []
-        self.step_index = 0
-
-        # Copy board
-        board = self.read_board()
-        work = [row[:] for row in board]
-
-        # Solve and record steps
-        if not solve_with_trace(work, self.steps):
-            messagebox.showerror("Unsolvable", "This Sudoku cannot be solved!")
-            return
-
-        self.solution_board = work
-
-        # Wipe empty cells to white
-        for r in range(9):
-            for c in range(9):
-                if self.vars[r][c].get().strip() == "":
-                    self.cells[r][c].configure(bg="white")
-
-        self.animate_step()
-
-    def animate_step(self):
-        if self.step_index >= len(self.steps):
-            # Finalize board
-            for r in range(9):
-                for c in range(9):
-                    self.vars[r][c].set(str(self.solution_board[r][c]))
-                    self.cells[r][c].configure(bg="#b3ffcc")
-            return
-
-        r, c, val = self.steps[self.step_index]
-
-        if val == -1:
-            # Backtrack undo
-            self.vars[r][c].set("")
-            self.cells[r][c].configure(bg="#ff4d4d")
+    def solve(self):
+        temp = [row[:] for row in self.board]
+        if backtracking_solve(temp):
+            self.board = temp
+            self.candidates = [[set() for _ in range(9)] for _ in range(9)]
+            self.redraw()
+            messagebox.showinfo("Solved", "Sudoku solved successfully!")
         else:
-            # Try a number
-            self.vars[r][c].set(str(val))
-            self.cells[r][c].configure(bg="#b3ffcc")
+            messagebox.showerror("Error", "Cannot solve this Sudoku.")
 
-        self.step_index += 1
-        self.root.after(ANIMATION_DELAY, self.animate_step)
+    def hint(self):
+        # Work on a copy of the current board (ignores current manual candidates)
+        temp = [row[:] for row in self.board]
+        candidates = compute_all_candidates(temp)
+
+        # First try naked single
+        res = find_naked_single(temp, candidates)
+        if not res:
+            # Then try hidden single
+            res = find_hidden_single(temp, candidates)
+
+        if not res:
+            messagebox.showinfo(
+                "Hint",
+                "No simple logical move found.\n(Next step would need more advanced strategies.)"
+            )
+            return
+
+        r, c, val, msg = res
+        # Apply to real board
+        self.board[r][c] = val
+        self.candidates[r][c].clear()
+        self.selected = (r, c)
+        self.redraw()
+        messagebox.showinfo("Hint", msg)
 
 
-# -------------------- MAIN -------------------- #
+# -------------------- RUN APP -------------------- #
 
 if __name__ == "__main__":
     root = tk.Tk()
