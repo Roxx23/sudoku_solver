@@ -1,9 +1,7 @@
 import random
 from copy import deepcopy
 
-# ---------------------------------------------------------
 # Generate a full valid Sudoku solution using backtracking
-# ---------------------------------------------------------
 
 def is_valid(board, num, row, col):
     for c in range(9):
@@ -55,9 +53,8 @@ def generate_full_solution():
     return board
 
 
-# ---------------------------------------------------------
+
 # Fast unique-solution puzzle generator
-# ---------------------------------------------------------
 
 def remove_numbers(board, clues=30):
     """
