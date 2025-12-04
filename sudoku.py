@@ -2,12 +2,11 @@ import tkinter as tk
 from tkinter import messagebox
 from copy import deepcopy
 
-from sudoku_generator import generate_puzzle  # uses your true generator
+from sudoku_generator import generate_puzzle 
 
 
-# ============================================================
-#                 BOARD LOGIC HELPERS
-# ============================================================
+#  BOARD LOGIC HELPERS
+
 
 def is_valid(board, num, row, col):
     for c in range(9):
@@ -33,10 +32,7 @@ def find_empty(board):
     return None
 
 
-# ============================================================
-#         SOLVER WITH RECORDED STEPS (NO ANIM RECURSION)
-# ============================================================
-
+# SOLVER WITH RECORDED STEPS (NO ANIM RECURSION)
 def solve_with_steps(board, steps):
     """
     Standard backtracking solver that RECORDS every step in `steps`.
@@ -44,7 +40,7 @@ def solve_with_steps(board, steps):
     """
     empty = find_empty(board)
     if not empty:
-        return True  # solved
+        return True  
 
     r, c = empty
     for guess in range(1, 10):
@@ -62,9 +58,7 @@ def solve_with_steps(board, steps):
     return False
 
 
-# ============================================================
-#                     CANDIDATE LOGIC
-# ============================================================
+# CANDIDATE LOGIC
 
 def compute_all_candidates(board):
     cand = [[set() for _ in range(9)] for _ in range(9)]
@@ -130,10 +124,7 @@ def find_hidden_single(board, candidates):
 
     return None
 
-
-# ============================================================
-#                  MAIN GAME GUI (GRID SCREEN)
-# ============================================================
+# MAIN GAME GUI (GRID SCREEN)
 
 class SudokuGUI:
     def __init__(self, root, initial_board=None):
@@ -151,7 +142,7 @@ class SudokuGUI:
 
         self.build_ui()
 
-    # ---------------- UI setup ---------------- #
+    # UI setup
 
     def build_ui(self):
         top = tk.Frame(self.root, bg="#222831")
@@ -189,7 +180,7 @@ class SudokuGUI:
         self.canvas.bind("<Button-1>", self.handle_click)
         self.root.bind("<Key>", self.key_input)
 
-    # ---------------- Back button ---------------- #
+    #  Back button 
 
     def go_back(self):
         """Return to main menu."""
@@ -390,9 +381,7 @@ class SudokuGUI:
         messagebox.showinfo("Hint", msg)
 
 
-# ============================================================
 #                     MAIN MENU SCREEN
-# ============================================================
 
 class MainMenu:
     def __init__(self, root):
@@ -429,9 +418,7 @@ class MainMenu:
         newroot.mainloop()
 
 
-# ============================================================
 #                        RUN APP
-# ============================================================
 
 if __name__ == "__main__":
     root = tk.Tk()
